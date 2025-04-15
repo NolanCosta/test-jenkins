@@ -1,0 +1,167 @@
+🐳 docker-compose.yml
+
+version: "3.8"  # Utilise la syntaxe Docker Compose version 3.8 (Docker 19.03+)
+
+services:
+  jenkins:
+    build: .  # Utilise le Dockerfile présent dans le répertoire courant
+    ports:
+      - "8080:8080"  # Accès à Jenkins via http://localhost:8080
+    environment:
+      - USER_CHOCOLATEEN_PASSWORD=chocolateen
+      - USER_VAUGIE_G_PASSWORD=vaugieG
+      - USER_I_DONT_KNOW_PASSWORD=iDontKnow
+      - USER_NASSO_PASSWORD=nasso
+      # Variables d’environnement pour les mots de passe (utilisées par JCasC)
+    volumes:
+      - jenkins_home:/var/jenkins_home  # Persistance des données Jenkins
+
+volumes:
+  jenkins_home:  # Déclaration du volume utilisé ci-dessus
+
+
+🐳 Dockerfile
+
+FROM jenkins/jenkins:lts  # Image Jenkins officielle (LTS = stable)
+
+USER root  # Passage en root pour installation de paquets
+
+RUN apt-get update && apt-get install -y make build-essential
+# Outils nécessaires pour les étapes de build/test
+
+COPY plugins.txt /usr/share/jenkins/ref/plugins.txt
+RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt
+# Installation des plugins listés dans plugins.txt
+
+COPY my_marvin.yml /var/jenkins_home/my_marvin.yml
+COPY job_dsl.groovy /var/jenkins_home/job_dsl.groovy
+# Fichiers de configuration copiés dans Jenkins
+
+ENV CASC_JENKINS_CONFIG=/var/jenkins_home/my_marvin.yml
+# Utilisation de JCasC pour configurer Jenkins automatiquement
+
+USER jenkins  # Retour à l'utilisateur Jenkins pour exécuter en sécurité
+
+
+📂 plugins.txt
+
+cloudbees-folder : support des dossiers dans Jenkins.
+
+configuration-as-code : pour configurer Jenkins via YAML.
+
+credentials : gestion des identifiants (secrets, mots de passe).
+
+github : intégration GitHub.
+
+instance-identity : identifiant unique Jenkins (souvent requis).
+
+job-dsl : pour créer dynamiquement des jobs via du code Groovy.
+
+script-security : sécurise les scripts groovy exécutés dans Jenkins.
+
+structs : dépendance pour plusieurs plugins.
+
+role-strategy : permet la gestion fine des droits par rôle.
+
+ws-cleanup : pour nettoyer les workspaces entre les builds.
+
+
+📜 my_marvin.yml (Jenkins Configuration as Code)
+
+jenkins:
+  systemMessage: "Welcome to the Chocolatine-Powered Marvin Jenkins Instance." #Message affiché dans l’interface Jenkins.
+
+    🔐 Authentification
+
+    securityRealm:
+        local:
+            allowsSignup: false
+            users:
+    #Active une authentification locale avec une liste d'utilisateurs définis dans le fichier.
+
+    Chaque utilisateur a :
+        - id: chocolateen #identifiant utilisateur pour Jenkins.
+          name: Hugo #nom affiché.
+          password: "${USER_CHOCOLATEEN_PASSWORD}" #récupéré via les variables d'environnement du docker-compose.
+
+    🔒 Autorisations
+
+    authorizationStrategy:
+        roleBased:
+        roles:
+            global:
+    #Active la stratégie d’autorisations basée sur les rôles (nécessite role-strategy).
+
+    Exemple :
+          - name: admin
+            permissions:
+              - "Overall/Administer"
+            entries:
+              - user: "chocolateen"
+    #Donne les droits admin complets à chocolateen.
+
+    #Les autres rôles (ape, gorilla, assist) ont des permissions plus ou moins restreintes selon leur fonction.
+
+    📦 Jobs auto-générés
+
+    jobs:
+        - file: /var/jenkins_home/job_dsl.groovy
+    #Charge dynamiquement les jobs définis dans le script job_dsl.groovy via le plugin Job DSL.
+
+    🌐 URL de Jenkins
+
+    unclassified:
+        location:
+            url: http://localhost:8080/
+    #Spécifie l’URL publique de Jenkins (utile pour les liens envoyés par mail ou vers GitHub).
+
+
+🧠 job_dsl.groovy – Création de jobs via code
+
+    📁 Dossier "Tools"
+
+    folder('Tools') {
+        description('Folder for miscellaneous tools.')
+    }
+    #Crée un dossier Jenkins nommé Tools pour organiser les jobs.
+
+    🔄 Job clone-repository
+
+    #Job simple qui clone un repo Git donné.
+
+    job('Tools/clone-repository') {
+        wrappers {
+            preBuildCleanup() #nettoie l’environnement avant chaque build.
+        }
+        parameters {
+            stringParam('GIT_REPOSITORY_URL', '', 'Git URL of the repository to clone') #permet à l’utilisateur de passer l’URL du repo.
+        }
+        steps {
+            shell('git clone $GIT_REPOSITORY_URL') #lance la commande de clonage.
+        }
+    }
+
+    🌱 Job SEED
+
+    #Job qui génère dynamiquement un autre job Jenkins à partir du dépôt Git spécifié.
+
+    job('Tools/SEED') {
+        parameters {
+            stringParam('GITHUB_NAME', '', 'GitHub repository owner/repo_name')
+            stringParam('DISPLAY_NAME', '', 'DAisplay name for the job')
+        }
+        steps {
+            dsl {
+                text('''
+                    job("$DISPLAY_NAME") {
+                        ...
+                    }
+                ''')
+            }
+        }
+    }
+
+    #Utilise Job DSL pour créer un job qui :
+        - Clône le repo GitHub
+        - S’exécute toutes les minutes (scm('* * * * *'))
+        - Lance une suite de commandes Make (fclean, make, tests_run, clean)
